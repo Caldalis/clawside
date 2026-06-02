@@ -1,5 +1,7 @@
 # Clawside
 
+![clawside](./assets/README_img.png)
+
 <div align="center">
   <p>
     <a href="./README.md">English</a> |
@@ -16,7 +18,6 @@
     <a href="https://github.com/Caldalis/clawside/issues"><img src="https://img.shields.io/github/issues/Caldalis/clawside" alt="Issues"></a>
   </p>
 </div>
-
 Clawside is a Python agent orchestration system. It is made of a long-running
 host process and per-session Docker agent containers: the host receives CLI or
 Telegram messages, routes them to a specific agent, writes them into the session

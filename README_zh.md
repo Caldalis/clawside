@@ -1,5 +1,7 @@
 # Clawside
 
+![clawside](./assets/README_img.png)
+
 <div align="center">
   <p>
     <a href="./README.md">English</a> |
