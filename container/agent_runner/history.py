@@ -148,7 +148,7 @@ async def maybe_compress(messages: list[dict], client: Any, model: str) -> list[
     try:
         summary_text = await _summarize(older, client, model)
         summary_msg = {
-            "role": "system",
+            "role": "user",
             "content": (
                 "Earlier conversation summary (compressed for context limits):\n"
                 + summary_text
