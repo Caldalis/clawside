@@ -20,6 +20,7 @@ class ContainerConfig:
     assistant_name: str = "Andy"
     agent_group_id: str = ""
     max_messages_per_prompt: int = 10
+    mcp_call_timeout_s: float = 600.0
     mcp_servers: dict[str, dict[str, Any]] = field(default_factory=dict)
     additional_mounts: list[dict[str, Any]] = field(default_factory=list)
 
@@ -51,6 +52,10 @@ def load_container_config(path: str = CONTAINER_JSON_PATH) -> ContainerConfig:
         cfg.max_messages_per_prompt = int(data.get("max_messages_per_prompt") or 10)
     except (TypeError, ValueError):
         cfg.max_messages_per_prompt = 10
+    try:
+        cfg.mcp_call_timeout_s = float(data.get("mcp_call_timeout_s") or 600.0)
+    except (TypeError, ValueError):
+        cfg.mcp_call_timeout_s = 600.0
 
     raw_servers = data.get("mcp_servers")
     if isinstance(raw_servers, dict):

@@ -54,9 +54,11 @@ async def amain() -> None:
     client = AsyncOpenAI(
         api_key=os.environ.get("OPENAI_API_KEY"),
         base_url=os.environ.get("OPENAI_BASE_URL") or None,
+        timeout=120.0,
+        max_retries=3,
     )
 
-    async with MCPManager() as mgr:
+    async with MCPManager(call_timeout_s=config.mcp_call_timeout_s) as mgr:
         await mgr.start(servers)
         await poll_loop.run(mgr, client, config, registry, base_prompt)
 

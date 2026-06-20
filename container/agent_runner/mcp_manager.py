@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import sys
 from contextlib import AsyncExitStack
@@ -10,6 +11,9 @@ from mcp.client.stdio import StdioServerParameters, stdio_client
 
 
 CLAWSIDE_SERVER_NAME = "clawside"
+
+
+DEFAULT_CALL_TIMEOUT_S = 600.0
 
 
 def _log(msg: str) -> None:
@@ -30,12 +34,12 @@ def _tool_to_openai(tool: Any) -> dict[str, Any]:
 class MCPManager:
 
 
-
-    def __init__(self) -> None:
+    def __init__(self, call_timeout_s: float = DEFAULT_CALL_TIMEOUT_S) -> None:
         self.openai_tools: list[dict] = []
         self._stack: Optional[AsyncExitStack] = None
         self._tool_to_session: dict[str, ClientSession] = {}
         self._sessions: dict[str, ClientSession] = {}
+        self._call_timeout_s = call_timeout_s
 
     async def __aenter__(self) -> "MCPManager":
         self._stack = AsyncExitStack()
@@ -90,7 +94,19 @@ class MCPManager:
         if session is None:
             return f"Error: unknown tool {tool_name!r}"
         try:
-            result = await session.call_tool(tool_name, arguments)
+            if self._call_timeout_s and self._call_timeout_s > 0:
+                result = await asyncio.wait_for(
+                    session.call_tool(tool_name, arguments),
+                    timeout=self._call_timeout_s,
+                )
+            else:
+                result = await session.call_tool(tool_name, arguments)
+        except asyncio.TimeoutError:
+            _log(f"tool {tool_name!r} timed out after {self._call_timeout_s}s")
+            return (
+                f"Error: tool {tool_name!r} timed out after "
+                f"{self._call_timeout_s}s (MCP server did not respond)"
+            )
         except Exception as e:
             return f"Error: tool {tool_name!r} raised {e!r}"
 

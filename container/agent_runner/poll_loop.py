@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 import re
 import sys
@@ -38,6 +39,7 @@ from agent_runner.agent import run_agent
 
 POLL_INTERVAL_MS = 1000
 ACTIVE_POLL_INTERVAL_MS = 500
+HEARTBEAT_INTERVAL_MS = 10_000
 
 MESSAGE_BLOCK_RE = re.compile(
     r'<message\s+to="([^"]+)"\s*>([\s\S]*?)</message>'
@@ -137,6 +139,14 @@ def _write_to_destination(dest: dict, body: str, routing: RoutingContext) -> Non
 async def _sleep_ms(ms: int) -> None:
     await asyncio.sleep(ms / 1000.0)
 
+async def _heartbeat_loop(interval_ms: int) -> None:
+    try:
+        while True:
+            touch_heartbeat()
+            await asyncio.sleep(interval_ms / 1000.0)
+    except asyncio.CancelledError:
+        raise
+
 
 async def run(
     mcp_manager: Any,
@@ -153,6 +163,7 @@ async def run(
     while True:
         poll_count += 1
         batch_ids: list[str] = []
+        hb_task: Optional[asyncio.Task] = None
         try:
             messages = [
                 m
@@ -179,9 +190,10 @@ async def run(
             batch_ids = [m.id for m in messages]
             mark_processing(batch_ids)
 
+            hb_task = asyncio.create_task(_heartbeat_loop(HEARTBEAT_INTERVAL_MS))
+
             routing = extract_routing(messages)
 
-            # /clear 处理 —— 单命令短路。
             normal: list[MessageInRow] = []
             command_ids: list[str] = []
             for msg in messages:
@@ -265,6 +277,10 @@ async def run(
             # 不要重新抛出 保持循环存活。
             await _sleep_ms(POLL_INTERVAL_MS)
         finally:
+            if hb_task is not None:
+                hb_task.cancel()
+                with contextlib.suppress(asyncio.CancelledError):
+                    await hb_task
             if batch_ids:
                 try:
                     from agent_runner.db.connection import open_outbound_db
