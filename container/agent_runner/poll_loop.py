@@ -40,6 +40,7 @@ from agent_runner.agent import run_agent
 POLL_INTERVAL_MS = 1000
 ACTIVE_POLL_INTERVAL_MS = 500
 HEARTBEAT_INTERVAL_MS = 10_000
+MAX_FORMAT_FIX_ATTEMPTS = 3
 
 MESSAGE_BLOCK_RE = re.compile(
     r'<message\s+to="([^"]+)"\s*>([\s\S]*?)</message>'
@@ -54,7 +55,19 @@ def _generate_id() -> str:
 def _has_assistant_message(history: list[dict]) -> bool:
     return any(m.get("role") == "assistant" for m in history)
 
-def _addendum_prompt(assistant_name: str) -> str:
+def _origin_destination_name(routing: RoutingContext) -> Optional[str]:
+    if not routing.channel_type or not routing.platform_id:
+        return None
+    for d in list_destinations():
+        if (
+            d.get("type") == "channel"
+            and d.get("channel_type") == routing.channel_type
+            and d.get("platform_id") == routing.platform_id
+        ):
+            return d.get("name")
+    return None
+
+def _addendum_prompt(assistant_name: str, origin_name: Optional[str] = None) -> str:
     dests = list_destinations()
     if not dests:
         dest_block = "(no destinations configured)"
@@ -67,10 +80,20 @@ def _addendum_prompt(assistant_name: str) -> str:
             else:
                 lines.append(f"  - {d['name']}: {label} (agent group)")
         dest_block = "\n".join(lines)
+    reply_hint = (
+        f'To reply in the current conversation, send to "{origin_name}".\n'
+        if origin_name
+        else ""
+    )
     return (
         f"You are {assistant_name}.\n\n"
-        "Wrap every message you send to the user in <message to=\"name\">...</message> blocks. "
-        "Use <internal>...</internal> for scratchpad / reasoning that the user should NOT see.\n\n"
+        "## Output contract (REQUIRED)\n"
+        "Everything you want a user to see MUST be wrapped:\n"
+        '  <message to="name">your reply here</message>\n'
+        "Use <internal>...</internal> for private reasoning the user must NOT see.\n\n"
+        "⚠️ Any text OUTSIDE a <message> block is NOT delivered — it is discarded as "
+        "scratchpad. If you forget to wrap, the user receives silence.\n\n"
+        f"{reply_hint}"
         f"Your destinations:\n{dest_block}"
     )
 
@@ -80,8 +103,7 @@ def _build_system_prompt(
     parts = [p for p in (base_prompt or "", skills_section or "", addendum or "") if p]
     return "\n\n".join(parts)
 
-def _dispatch_message_blocks(text: str, routing: RoutingContext) -> tuple[int, bool]:
-
+def _dispatch_message_blocks(text: str, routing: RoutingContext) -> tuple[int, str]:
     sent = 0
     last_index = 0
     scratchpad_parts: list[str] = []
@@ -107,8 +129,7 @@ def _dispatch_message_blocks(text: str, routing: RoutingContext) -> tuple[int, b
     scratch = strip_internal_tags("".join(scratchpad_parts))
     if scratch:
         _log(f"[scratchpad] {scratch[:500]}{'…' if len(scratch) > 500 else ''}")
-    has_unwrapped = sent == 0 and bool(scratch)
-    return sent, has_unwrapped
+    return sent, scratch
 
 
 def _write_to_destination(dest: dict, body: str, routing: RoutingContext) -> None:
@@ -135,6 +156,22 @@ def _write_to_destination(dest: dict, body: str, routing: RoutingContext) -> Non
         in_reply_to=routing.in_reply_to,
     )
 
+
+def _fallback_deliver(text: str, routing: RoutingContext) -> bool:
+    if not text or not routing.channel_type or not routing.platform_id:
+        return False
+    if routing.channel_type == "agent":
+        return False
+    write_message_out(
+        id=_generate_id(),
+        kind="chat",
+        platform_id=routing.platform_id,
+        channel_type=routing.channel_type,
+        thread_id=routing.thread_id,
+        content=json.dumps({"text": text}),
+        in_reply_to=routing.in_reply_to,
+    )
+    return True
 
 async def _sleep_ms(ms: int) -> None:
     await asyncio.sleep(ms / 1000.0)
@@ -226,7 +263,8 @@ async def run(
             )
             auto, lazy = registry.resolve(ctx)
             skills_section = build_skills_prompt(auto, lazy)
-            addendum = _addendum_prompt(config.assistant_name)
+            origin_name = _origin_destination_name(routing)
+            addendum = _addendum_prompt(config.assistant_name, origin_name)
             system_prompt = _build_system_prompt(base_prompt, skills_section, addendum)
 
             history.append({"role": "user", "content": prompt_xml})
@@ -235,26 +273,48 @@ async def run(
                 [{"role": "system", "content": system_prompt}] + history
             )
 
-            final_text, turn_messages = await run_agent(
-                turn_messages, mcp_manager, client, config.model
-            )
+            dest_names = ", ".join(d["name"] for d in list_destinations()) or "(none)"
+            prefix_len = len(turn_messages)
+            segment_start = prefix_len
+            attempt = 0
 
-            new_history = [m for m in turn_messages if m.get("role") != "system"]
+            while True:
+                segment_start = len(turn_messages)
+                final_text, turn_messages = await run_agent(
+                    turn_messages, mcp_manager, client, config.model
+                )
+                if final_text is None:
+                    break
+                sent, scratch = _dispatch_message_blocks(final_text, routing)
+                if sent > 0 or not scratch:
+                    break
 
-            if final_text:
-                sent, unwrapped = _dispatch_message_blocks(final_text, routing)
-                if unwrapped:
-                    names = ", ".join(d["name"] for d in list_destinations()) or "(none)"
-                    nudge = (
-                        f"<system>Your response was not delivered — it was not "
-                        f"wrapped in <message to=\"name\">...</message> blocks. "
-                        f"All output must be wrapped: use <message to=\"name\"> "
-                        f"for content to send, or <internal> for scratchpad. "
-                        f"Your destinations: {names}. "
-                        f"Please re-send your response with the correct wrapping."
-                        f"</system>"
-                    )
-                    new_history.append({"role": "user", "content": nudge})
+                attempt += 1
+                if attempt > MAX_FORMAT_FIX_ATTEMPTS:
+                    if _fallback_deliver(scratch, routing):
+                        _log(
+                            f"format-fix exhausted ({MAX_FORMAT_FIX_ATTEMPTS} tries); "
+                            "fallback-delivered unwrapped reply to origin"
+                        )
+                    else:
+                        _log("format-fix exhausted; no resolvable origin, reply dropped")
+                    break
+
+                to_hint = (
+                    f'to="{origin_name}"' if origin_name else 'to="<one of your destinations>"'
+                )
+                turn_messages.append({
+                    "role": "user",
+                    "content": (
+                        "<system>Your previous reply was NOT delivered to the user: it "
+                        "was not wrapped in <message to=\"name\">...</message> blocks. "
+                        f"Re-send the SAME content now, wrapped. To reply here use {to_hint}. "
+                        f"Valid destinations: {dest_names}.</system>"
+                    ),
+                })
+
+            kept = turn_messages[:prefix_len] + turn_messages[segment_start:]
+            new_history = [m for m in kept if m.get("role") != "system"]
 
             set_history(new_history)
             mark_completed(batch_ids)
