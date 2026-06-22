@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import os
 import sqlite3
@@ -395,7 +396,7 @@ async def ask_user_question(
                 payload = {}
             return str(payload.get("value") or payload.get("selectedOption") or "")
 
-        time.sleep(1.0)
+        await asyncio.sleep(1.0)
 
     return f"Error: question timed out after {timeout}s"
 

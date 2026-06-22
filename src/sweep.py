@@ -211,7 +211,7 @@ async def sweep_session(session: Session) -> None:
         alive = is_container_running(session.id)
 
         if alive and out_db is not None:
-            _enforce_running_container_sla(in_db, out_db, session)
+            await _enforce_running_container_sla(in_db, out_db, session)
 
         if not alive and out_db is not None:
             _reset_stuck_processing_rows(
@@ -251,7 +251,7 @@ def _heartbeat_mtime_ms(agent_group_id: str, session_id: str) -> float:
     return st.st_mtime * 1000.0
 
 
-def _enforce_running_container_sla(
+async def _enforce_running_container_sla(
     in_db: sqlite3.Connection,
     out_db: sqlite3.Connection,
     session: Session,
@@ -273,7 +273,7 @@ def _enforce_running_container_sla(
             heartbeat_age_ms=decision.heartbeat_age_ms,
             ceiling_ms=decision.ceiling_ms,
         )
-        kill_container(session.id, "absolute-ceiling")
+        await kill_container(session.id, "absolute-ceiling")
         _reset_stuck_processing_rows(in_db, out_db, session, "absolute-ceiling")
         return
 
@@ -285,7 +285,7 @@ def _enforce_running_container_sla(
         claim_age_ms=decision.claim_age_ms,
         tolerance_ms=decision.tolerance_ms,
     )
-    kill_container(session.id, "claim-stuck")
+    await kill_container(session.id, "claim-stuck")
     _reset_stuck_processing_rows(in_db, out_db, session, "claim-stuck")
 
 

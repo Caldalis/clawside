@@ -93,7 +93,7 @@ async def wake_container(session: Session) -> bool:
         _wake_futures.pop(session.id, None)
 
 
-def kill_container(
+async def kill_container(
     session_id: str,
     reason: str,
     on_exit: Optional[Callable[[], None | Awaitable[None]]] = None,
@@ -115,7 +115,7 @@ def kill_container(
     if on_exit is not None:
         entry.watcher.add_done_callback(lambda _t: _schedule(on_exit))
 
-    if not _stop_container(entry.container_name):
+    if not await _stop_container(entry.container_name):
         with contextlib.suppress(ProcessLookupError):
             entry.process.kill()
 
@@ -338,26 +338,29 @@ async def _drain(stream: asyncio.StreamReader) -> None:
         if not chunk:
             return
 
-
-def _stop_container(name: str) -> bool:
-
+async def _stop_container(name: str) -> bool:
     if not _CONTAINER_NAME_RE.match(name):
         log.warn("container_stop_invalid_name", name=name)
         return False
     cfg = get_config()
     runtime_bin = shutil.which(cfg.container_runtime) or cfg.container_runtime
     try:
-        subprocess.run(
-            [runtime_bin, "stop", "-t", "1", name],
+        proc = await asyncio.create_subprocess_exec(
+            runtime_bin, "stop", "-t", "1", name,
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
-            check=True,
-            timeout=15,
         )
-        return True
-    except (subprocess.CalledProcessError, subprocess.TimeoutExpired, FileNotFoundError) as e:
+    except (FileNotFoundError, OSError) as e:
         log.warn("container_stop_failed", name=name, err=str(e))
         return False
+    try:
+        await asyncio.wait_for(proc.wait(), timeout=15)
+    except asyncio.TimeoutError:
+        log.warn("container_stop_failed", name=name, err="timeout")
+        with contextlib.suppress(ProcessLookupError):
+            proc.kill()
+        return False
+    return proc.returncode == 0
 
 
 def _get_loop() -> Optional[asyncio.AbstractEventLoop]:

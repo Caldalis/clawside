@@ -97,7 +97,7 @@ def _groups_delete(args: dict) -> Any:
     return {"deleted": gid}
 
 
-def _groups_restart(args: dict) -> Any:
+async def _groups_restart(args: dict) -> Any:
 
     gid = _require(args, "id")
     try:
@@ -108,7 +108,7 @@ def _groups_restart(args: dict) -> Any:
     for s in get_active_sessions():
         if s.agent_group_id == gid:
             try:
-                kill_container(s.id, "ncl groups restart")
+                await kill_container(s.id, "ncl groups restart")
                 killed.append(s.id)
             except Exception:
                 pass
