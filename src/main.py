@@ -77,15 +77,31 @@ def _make_delivery_adapter():
 
     return _Multiplex()
 
+def _resolve_choice_value(options_json: Optional[str], choice: str) -> str:
+    try:
+        idx = int(choice)
+    except (TypeError, ValueError):
+        return choice
+    try:
+        options = json.loads(options_json) if options_json else []
+    except (TypeError, ValueError):
+        return choice
+    if not isinstance(options, list) or idx < 0 or idx >= len(options):
+        return choice
+    opt = options[idx]
+    if isinstance(opt, dict):
+        v = opt.get("value")
+        return str(v) if v is not None else str(opt.get("label") or "")
+    return str(opt)
 
 async def _handle_question_response(
     question_id: str,
-    value: str,
+    choice: str,
     user_id: Optional[str],
 ) -> None:
     db = get_db()
     row = db.execute(
-        "SELECT session_id, platform_id, channel_type, thread_id, message_out_id "
+        "SELECT session_id, platform_id, channel_type, thread_id, message_out_id, options_json "
         "FROM pending_questions WHERE question_id = ?",
         (question_id,),
     ).fetchone()
@@ -97,6 +113,8 @@ async def _handle_question_response(
     if sess is None:
         log.warn("action_session_missing", question_id=question_id, session_id=session_id)
         return
+
+    value = _resolve_choice_value(row["options_json"], choice)
 
     msg_id = f"qresp-{question_id}"
     content = json.dumps({

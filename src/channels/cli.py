@@ -109,8 +109,6 @@ class CLIAdapter(ChannelAdapter):
             print(f"[Agent] Pick a number 1..{len(options)}", file=sys.stdout, flush=True)
             return
 
-        chosen = options[idx - 1]
-        value = chosen.get("value") if isinstance(chosen, dict) else str(chosen)
         question_id = pending["question_id"]
         self._pending_question = None
 
@@ -119,7 +117,7 @@ class CLIAdapter(ChannelAdapter):
             log.warn("cli_action_handler_missing", question_id=question_id)
             return
         try:
-            await handler(question_id, str(value), CLI_USER_ID)
+            await handler(question_id, str(idx - 1), CLI_USER_ID)
         except Exception as e:
             log.error("cli_action_handler_failed", question_id=question_id, err=str(e))
 

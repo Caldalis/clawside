@@ -161,7 +161,7 @@ class TelegramAdapter(ChannelAdapter):
         if sep == -1:
             return
         question_id = rest[:sep]
-        value = rest[sep + 1 :]
+        choice = rest[sep + 1 :]
 
         user = query.from_user
         handle = (user.username or str(user.id)) if user else None
@@ -172,7 +172,7 @@ class TelegramAdapter(ChannelAdapter):
             log.warn("telegram_action_handler_missing", question_id=question_id)
             return
         try:
-            await handler(question_id, value, user_id)
+            await handler(question_id, choice, user_id)
         except Exception as e:
             log.error("telegram_action_handler_failed", question_id=question_id, err=str(e))
 
@@ -254,14 +254,9 @@ class TelegramAdapter(ChannelAdapter):
             return str(msg.message_id)
 
         keyboard = []
-        for opt in options:
+        for i, opt in enumerate(options):
             label = opt.get("label") if isinstance(opt, dict) else str(opt)
-            value = (
-                opt.get("value")
-                if isinstance(opt, dict) and opt.get("value") is not None
-                else label
-            )
-            data = f"q:{question_id}:{value}"[:64]
+            data = f"q:{question_id}:{i}"
             keyboard.append([InlineKeyboardButton(text=str(label), callback_data=data)])
 
         body_parts = []
