@@ -341,19 +341,3 @@ async def run(
                 hb_task.cancel()
                 with contextlib.suppress(asyncio.CancelledError):
                     await hb_task
-            if batch_ids:
-                try:
-                    from agent_runner.db.connection import open_outbound_db
-                    db = open_outbound_db()
-                    try:
-                        db.executemany(
-                            "UPDATE processing_ack SET status='completed', "
-                            "status_changed=datetime('now') "
-                            "WHERE message_id = ? AND status = 'processing'",
-                            [(mid,) for mid in batch_ids],
-                        )
-                        db.commit()
-                    finally:
-                        db.close()
-                except Exception as e:
-                    _log(f"finally drain failed: {e!r}")
