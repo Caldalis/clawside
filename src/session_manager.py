@@ -203,36 +203,6 @@ def write_session_message(
 
     update_session(session_id, last_active=datetime.now(timezone.utc).isoformat())
 
-def write_outbound_direct(
-    agent_group_id: str,
-    session_id: str,
-    message: dict,
-) -> None:
-
-    db = _open_outbound_raw(outbound_db_path(agent_group_id, session_id), readonly=False)
-    try:
-        db.execute(
-            """
-            INSERT OR IGNORE INTO messages_out
-              (id, seq, timestamp, kind, platform_id, channel_type, thread_id, content)
-            VALUES
-              (?, (SELECT COALESCE(MAX(seq), 0) + 2 FROM messages_out), datetime('now'),
-               ?, ?, ?, ?, ?)
-            """,
-            (
-                message["id"],
-                message["kind"],
-                message.get("platform_id"),
-                message.get("channel_type"),
-                message.get("thread_id"),
-                message["content"],
-            ),
-        )
-        db.commit()
-    finally:
-        db.close()
-
-
 def extract_attachment_files(
     agent_group_id: str,
     session_id: str,

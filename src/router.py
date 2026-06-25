@@ -23,7 +23,6 @@ from src.db.sessions import find_session_for_agent
 from src.log import log
 from src.session_manager import (
     resolve_session,
-    write_outbound_direct,
     write_session_message,
 )
 
@@ -309,20 +308,28 @@ async def _deliver_to_agent(
             log.debug("filtered_command_dropped", agent_group_id=agent.agent_group_id)
             return
         if gate.action == "deny":
-            write_outbound_direct(
-                session.agent_group_id,
-                session.id,
-                {
-                    "id": f"deny-{int(time.time() * 1000)}-{''.join(random.choices('abcdefghijklmnopqrstuvwxyz0123456789', k=6))}",
-                    "kind": "chat",
-                    "platform_id": addr_platform,
-                    "channel_type": addr_channel,
-                    "thread_id": addr_thread,
-                    "content": json.dumps(
-                        {"text": f"Permission denied: {gate.command} requires admin access."}
-                    ),
-                },
-            )
+            # 主机直接拒接，不写入 outbound
+            from src.delivery import get_delivery_adapter
+            adapter = get_delivery_adapter()
+            if adapter is not None:
+                try:
+                    await adapter.deliver(
+                        channel_type=addr_channel,
+                        platform_id=addr_platform,
+                        thread_id=addr_thread,
+                        kind="chat",
+                        content=json.dumps(
+                            {"text": f"Permission denied: {gate.command} requires admin access."}
+                        ),
+                        files=None,
+                    )
+                except Exception as e:
+                    log.warn(
+                        "deny_delivery_failed",
+                        command=gate.command, agent_group_id=agent.agent_group_id, err=str(e),
+                    )
+            else:
+                log.warn("deny_no_delivery_adapter", command=gate.command)
             log.info(
                 "admin_command_denied",
                 command=gate.command, user_id=user_id, agent_group_id=agent.agent_group_id,
