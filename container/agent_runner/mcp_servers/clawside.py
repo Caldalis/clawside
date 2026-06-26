@@ -216,11 +216,9 @@ async def send_file(
     """
     if not path:
         return "Error: path is required"
-
-    resolved = path if os.path.isabs(path) else os.path.abspath(os.path.join("/workspace/agent", path))
-    # 拒绝越出 /workspace 的路径。
-    if not resolved.startswith(WORKSPACE_ROOT):
-        return f"Error: path is outside /workspace ({resolved})"
+    resolved = _safe_workspace_path(path, base=os.path.join(WORKSPACE_ROOT, "agent"))
+    if resolved is None:
+        return f"Error: path is outside /workspace ({path})"
     if not os.path.isfile(resolved):
         return f"Error: file not found: {path}"
 
@@ -582,11 +580,12 @@ async def update_task(
 
 
 
-def _safe_workspace_path(path: str) -> Optional[str]:
-    """在 /workspace/ 下解析 `path`。越出根时返回 None。"""
+def _safe_workspace_path(path: str, base: Optional[str] = None) -> Optional[str]:
     if not path:
         return None
-    candidate = path if os.path.isabs(path) else os.path.join(WORKSPACE_ROOT, path)
+    if base is None:
+        base = WORKSPACE_ROOT
+    candidate = path if os.path.isabs(path) else os.path.join(base, path)
     abs_path = os.path.abspath(candidate)
     if not (abs_path == WORKSPACE_ROOT or abs_path.startswith(WORKSPACE_ROOT + os.sep)):
         return None

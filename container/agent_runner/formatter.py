@@ -42,26 +42,6 @@ def strip_internal_tags(text: str) -> str:
         i = end + len("</internal>")
     return "".join(out).strip()
 
-def _format_local_time(ts: str, tz_name: str) -> str:
-    """把 ISO时间戳按用户时区格式化为简短本地时间"""
-    if not ts:
-        return ""
-    try:
-        # 解析 同时接受 ...Z 和 +00:00 后缀
-        s = ts.replace("Z", "+00:00") if ts.endswith("Z") else ts
-        dt = datetime.fromisoformat(s)
-        if dt.tzinfo is None:
-            # 把 naive 视为 UTC主机总是写 UTC ISO
-            dt = dt.replace(tzinfo=ZoneInfo("UTC"))
-        try:
-            local = dt.astimezone(ZoneInfo(tz_name))
-        except Exception:
-            local = dt
-        # h:MM AM/PM
-        return local.strftime("%-I:%M %p") if hasattr(datetime, "strftime") else local.isoformat()
-    except Exception:
-        return ts
-
 def _fmt_time_safe(ts: str, tz_name: str) -> str:
     if not ts:
         return ""

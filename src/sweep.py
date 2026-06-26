@@ -15,6 +15,7 @@ from src.container_runner import (
     wake_container,
 )
 from src.db.agent_groups import get_agent_group
+from src.db.connection import get_db
 from src.db.session_db import (
     count_due_messages,
     delete_orphan_processing_claims,
@@ -158,11 +159,31 @@ def stop_host_sweep() -> None:
     _sweep_task = None
 
 
+# 用户从不点选的 ask_user_question 会留下孤儿 pending_questions 行。每次 sweep
+# 清理远超任何合理问题超时的陈旧行（ask_user_question 默认超时 300s，这里留 24h 余量，
+# 不会误删仍在等待回答的问题）。
+PENDING_QUESTION_TTL_SEC = 24 * 3600
+
+def _cleanup_pending_questions() -> None:
+    try:
+        db = get_db()
+        cur = db.execute(
+            "DELETE FROM pending_questions "
+            "WHERE datetime(created_at) < datetime('now', ?)",
+            (f"-{PENDING_QUESTION_TTL_SEC} seconds",),
+        )
+        db.commit()
+        if cur.rowcount > 0:
+            log.info("sweep_cleaned_pending_questions", count=cur.rowcount)
+    except sqlite3.Error as e:
+        log.warn("sweep_cleanup_pending_questions_failed", err=str(e))
+
 async def _run_sweep() -> None:
     cfg = get_config()
     interval = cfg.sweep_poll_ms / 1000.0
     while True:
         try:
+            _cleanup_pending_questions()
             for session in get_active_sessions():
                 await sweep_session(session)
         except asyncio.CancelledError:
