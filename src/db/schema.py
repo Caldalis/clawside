@@ -124,7 +124,6 @@ CREATE TABLE IF NOT EXISTS container_configs (
 );
 
 -- 发送者未被识别 / 未被允许的入站消息。
--- （Nanoclaw 中称为 `unregistered_senders`；clawside 按 Phase 1 规范
 -- 重命名为 `dropped_messages`。）
 CREATE TABLE IF NOT EXISTS dropped_messages (
   channel_type       TEXT NOT NULL,
