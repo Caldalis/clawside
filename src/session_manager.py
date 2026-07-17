@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 import random
+import re
 import sqlite3
 import time
 from base64 import b64decode
@@ -64,6 +65,11 @@ def _is_safe_name(name: object) -> bool:
         return False
     return True
 
+
+_FS_UNSAFE_RE = re.compile(r'[<>:"|?*]')
+
+def _fs_safe_dir_name(name: str) -> str:
+    return _FS_UNSAFE_RE.sub("_", name)
 
 def _is_path_inside(parent: str, child: str) -> bool:
     parent = os.path.realpath(parent)
@@ -227,7 +233,8 @@ def extract_attachment_files(
 
     sess_dir = session_dir(agent_group_id, session_id)
     inbox_root = os.path.join(sess_dir, "inbox")
-    inbox_dir = os.path.join(inbox_root, message_id)
+    safe_msg_dir = _fs_safe_dir_name(message_id)
+    inbox_dir = os.path.join(inbox_root, safe_msg_dir)
 
     changed = False
     for att in attachments:
@@ -285,7 +292,7 @@ def extract_attachment_files(
             os.close(fd)
 
         att["name"] = filename
-        att["localPath"] = f"inbox/{message_id}/{filename}"
+        att["localPath"] = f"inbox/{safe_msg_dir}/{filename}"
         att.pop("data", None)
         changed = True
         log.debug("inbox_saved", message_id=message_id, filename=filename)

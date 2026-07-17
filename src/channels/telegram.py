@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 import uuid
+from base64 import b64encode
 from datetime import datetime, timezone
 from io import BytesIO
 from typing import Optional, TYPE_CHECKING
@@ -18,6 +19,72 @@ from src.log import log
 
 if TYPE_CHECKING:
     from src.config import Config
+
+
+MAX_ATTACHMENT_BYTES = 20 * 1024 * 1024
+
+def _detect_mention(text, entities, bot_username: str, bot_id) -> bool:
+    if not text or not entities:
+        return False
+    for ent in entities:
+        if ent.type == "mention":
+            raw = text[ent.offset : ent.offset + ent.length].lower()
+            if raw == f"@{bot_username}":
+                return True
+        elif ent.type == "text_mention" and ent.user and ent.user.id == bot_id:
+            return True
+    return False
+
+async def _download_file(bot, file_id: str) -> Optional[bytes]:
+    try:
+        f = await bot.get_file(file_id)
+        data = await f.download_as_bytearray()
+    except Exception as e:
+        log.warn("telegram_attachment_download_failed", file_id=file_id, err=str(e))
+        return None
+    return bytes(data)
+
+async def _collect_attachments(msg, bot) -> tuple[list[dict], list[str]]:
+    attachments: list[dict] = []
+    errors: list[str] = []
+
+    candidates: list[tuple[str, str, Optional[int], str]] = []
+    # (name, type, file_size, file_id)
+
+    doc = getattr(msg, "document", None)
+    if doc is not None:
+        name = getattr(doc, "file_name", None) or f"document-{doc.file_unique_id}"
+        candidates.append(
+            (name, "document", getattr(doc, "file_size", None), doc.file_id)
+        )
+
+    photos = getattr(msg, "photo", None)
+    if photos:
+        photo = photos[-1]
+        name = f"photo-{photo.file_unique_id}.jpg"
+        candidates.append(
+            (name, "photo", getattr(photo, "file_size", None), photo.file_id)
+        )
+
+    for name, atype, size, file_id in candidates:
+        if isinstance(size, int) and size > MAX_ATTACHMENT_BYTES:
+            errors.append(
+                f"{name}: exceeds {MAX_ATTACHMENT_BYTES // (1024 * 1024)}MB "
+                "limit, not received"
+            )
+            continue
+        data = await _download_file(bot, file_id)
+        if data is None:
+            errors.append(f"{name}: download failed")
+            continue
+        attachments.append(
+            {
+                "name": name,
+                "type": atype,
+                "data": b64encode(data).decode("ascii"),
+            }
+        )
+    return attachments, errors
 
 
 
@@ -44,12 +111,15 @@ class TelegramAdapter(ChannelAdapter):
 
 
         self._app.add_handler(
-            MessageHandler(filters.TEXT & ~filters.COMMAND, self._on_message)
+            MessageHandler(
+                (filters.TEXT | filters.Document.ALL | filters.PHOTO)
+                & ~filters.COMMAND,
+                self._on_message,
+            )
         )
         self._app.add_handler(CallbackQueryHandler(self._on_callback))
 
         self._runner_task: Optional[asyncio.Task] = None
-
 
 
     async def start(self) -> None:
@@ -87,11 +157,16 @@ class TelegramAdapter(ChannelAdapter):
 
     async def _on_message(self, update, context) -> None:  # type: ignore[no-untyped-def]
         msg = update.effective_message
-        if msg is None or msg.text is None:
+        if msg is None:
             return
         chat = msg.chat
         user = msg.from_user
         if chat is None or user is None:
+            return
+
+        text = msg.text or msg.caption or ""
+        has_media = bool(getattr(msg, "document", None) or getattr(msg, "photo", None))
+        if not text and not has_media:
             return
 
         platform_id = str(chat.id)
@@ -106,27 +181,36 @@ class TelegramAdapter(ChannelAdapter):
         sender_id = f"telegram:{handle}"
         sender_name = user.full_name or user.username or str(user.id)
 
-        # bot 是否被 @ 了
         bot_username = (context.bot.username or "").lower()
-        is_mention = False
-        if msg.entities:
-            for ent in msg.entities:
-                if ent.type == "mention":
-                    raw = msg.text[ent.offset : ent.offset + ent.length].lower()
-                    if raw == f"@{bot_username}":
-                        is_mention = True
-                        break
-                elif ent.type == "text_mention" and ent.user and ent.user.id == context.bot.id:
-                    is_mention = True
-                    break
+        is_mention = _detect_mention(
+            msg.text, msg.entities, bot_username, context.bot.id
+        ) or _detect_mention(
+            msg.caption,
+            getattr(msg, "caption_entities", None),
+            bot_username,
+            context.bot.id,
+        )
 
         is_group = chat.type in ("group", "supergroup", "channel")
 
+        attachments: list[dict] = []
+        if has_media:
+            attachments, errors = await _collect_attachments(msg, context.bot)
+            for err in errors:
+                try:
+                    await msg.reply_text(f"⚠️ {err}")
+                except Exception as e:
+                    log.warn("telegram_attachment_notice_failed", err=str(e))
+            if not attachments and not text:
+                return
+
         content = {
-            "text": msg.text,
+            "text": text,
             "sender": sender_name,
             "sender_id": sender_id,
         }
+        if attachments:
+            content["attachments"] = attachments
         message = InboundMessage(
             id=f"tg-{chat.id}-{msg.message_id}",
             kind="chat",
