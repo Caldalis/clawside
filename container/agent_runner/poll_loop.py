@@ -33,6 +33,7 @@ from agent_runner.formatter import (
     strip_internal_tags,
 )
 from agent_runner.history import maybe_compress
+from agent_runner.memory import build_memory_section
 from agent_runner.skill_loader import SkillContext, SkillRegistry, build_skills_prompt
 from agent_runner.agent import run_agent
 
@@ -98,9 +99,18 @@ def _addendum_prompt(assistant_name: str, origin_name: Optional[str] = None) -> 
     )
 
 def _build_system_prompt(
-    base_prompt: str, skills_section: str, addendum: str
+    base_prompt: str, memory_section: str, skills_section: str, addendum: str
 ) -> str:
-    parts = [p for p in (base_prompt or "", skills_section or "", addendum or "") if p]
+    parts = [
+        p
+        for p in (
+            base_prompt or "",
+            memory_section or "",
+            skills_section or "",
+            addendum or "",
+        )
+        if p
+    ]
     return "\n\n".join(parts)
 
 def _dispatch_message_blocks(text: str, routing: RoutingContext) -> tuple[int, str]:
@@ -265,7 +275,10 @@ async def run(
             skills_section = build_skills_prompt(auto, lazy)
             origin_name = _origin_destination_name(routing)
             addendum = _addendum_prompt(config.assistant_name, origin_name)
-            system_prompt = _build_system_prompt(base_prompt, skills_section, addendum)
+            memory_section = build_memory_section()
+            system_prompt = _build_system_prompt(
+                base_prompt, memory_section, skills_section, addendum
+            )
 
             history.append({"role": "user", "content": prompt_xml})
             history = await maybe_compress(history, client, config.model)

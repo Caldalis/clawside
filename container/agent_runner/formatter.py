@@ -218,10 +218,20 @@ def _format_system(msg: MessageInRow) -> str:
 
 
 
+def _now_local_str(tz_name: str) -> str:
+    try:
+        tz = ZoneInfo(tz_name)
+    except Exception:
+        tz = ZoneInfo("UTC")
+    return datetime.now(tz).strftime("%Y-%m-%d %H:%M")
+
 def format_messages(messages: list[MessageInRow]) -> str:
     """把一批消息渲染为 agent prompt 所用的 XML"""
     tz_name = _timezone()
-    header = f"<context timezone=\"{escape_xml(tz_name)}\" />\n"
+    header = (
+        f"<context timezone=\"{escape_xml(tz_name)}\" "
+        f"now=\"{escape_xml(_now_local_str(tz_name))}\" />\n"
+    )
     if not messages:
         return header
 

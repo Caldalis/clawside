@@ -47,6 +47,9 @@ def init_group_filesystem(group: AgentGroup) -> None:
     skills_dir = os.path.join(group_dir, "skills")
     os.makedirs(skills_dir, exist_ok=True)
 
+    memory_dir = os.path.join(group_dir, "memory")
+    os.makedirs(memory_dir, exist_ok=True)
+
     log.debug("group_filesystem_ready", group_id=group.id, folder=group.folder)
 
 

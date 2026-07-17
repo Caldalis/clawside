@@ -261,22 +261,39 @@ def mark_delivery_failed(db: sqlite3.Connection, message_out_id: str) -> None:
     db.commit()
 
 
+def _ensure_session_routing_columns(db: sqlite3.Connection) -> None:
+    cols = {
+        r["name"]
+        for r in db.execute("PRAGMA table_info(session_routing)").fetchall()
+    }
+    if cols and "is_group" not in cols:
+        db.execute("ALTER TABLE session_routing ADD COLUMN is_group INTEGER")
+
+
 def upsert_session_routing(
     db: sqlite3.Connection,
     channel_type: Optional[str],
     platform_id: Optional[str],
     thread_id: Optional[str],
+    is_group: Optional[int] = None,
 ) -> None:
+    _ensure_session_routing_columns(db)
     db.execute(
         """
-        INSERT INTO session_routing (id, channel_type, platform_id, thread_id)
-        VALUES (1, :channel_type, :platform_id, :thread_id)
+        INSERT INTO session_routing (id, channel_type, platform_id, thread_id, is_group)
+        VALUES (1, :channel_type, :platform_id, :thread_id, :is_group)
         ON CONFLICT(id) DO UPDATE SET
           channel_type = excluded.channel_type,
           platform_id  = excluded.platform_id,
-          thread_id    = excluded.thread_id
+          thread_id    = excluded.thread_id,
+          is_group     = excluded.is_group
         """,
-        {"channel_type": channel_type, "platform_id": platform_id, "thread_id": thread_id},
+        {
+            "channel_type": channel_type,
+            "platform_id": platform_id,
+            "thread_id": thread_id,
+            "is_group": is_group,
+        },
     )
     db.commit()
 

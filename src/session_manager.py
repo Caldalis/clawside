@@ -161,15 +161,23 @@ def write_session_routing(agent_group_id: str, session_id: str) -> None:
 
     channel_type: Optional[str] = None
     platform_id: Optional[str] = None
+    is_group: Optional[int] = None
     if session.messaging_group_id:
         mg = get_messaging_group(session.messaging_group_id)
         if mg is not None:
             channel_type = mg.channel_type
             platform_id = mg.platform_id
+            is_group = mg.is_group
 
     db = _open_inbound_raw(db_path)
     try:
-        upsert_session_routing(db, channel_type=channel_type, platform_id=platform_id, thread_id=session.thread_id)
+        upsert_session_routing(
+            db,
+            channel_type=channel_type,
+            platform_id=platform_id,
+            thread_id=session.thread_id,
+            is_group=is_group,
+        )
     finally:
         db.close()
 

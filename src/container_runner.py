@@ -185,11 +185,13 @@ def _refresh_session_routing_and_destinations(session: Session) -> None:
 
     channel_type: Optional[str] = None
     platform_id: Optional[str] = None
+    is_group: Optional[int] = None
     if session.messaging_group_id:
         mg = get_messaging_group(session.messaging_group_id)
         if mg is not None:
             channel_type = mg.channel_type
             platform_id = mg.platform_id
+            is_group = mg.is_group
 
     dest_rows = to_inbound_destination_rows(
         list_destinations_for_group(session.agent_group_id)
@@ -202,6 +204,7 @@ def _refresh_session_routing_and_destinations(session: Session) -> None:
             channel_type=channel_type,
             platform_id=platform_id,
             thread_id=session.thread_id,
+            is_group=is_group,
         )
         replace_destinations(db, dest_rows)
     finally:

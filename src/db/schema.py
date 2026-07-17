@@ -225,7 +225,10 @@ CREATE TABLE IF NOT EXISTS session_routing (
   id           INTEGER PRIMARY KEY CHECK (id = 1),
   channel_type TEXT,
   platform_id  TEXT,
-  thread_id    TEXT
+  thread_id    TEXT,
+  is_group     INTEGER
+               -- 1=群聊, 0=私聊, NULL=未知。容器据此门控私人记忆的加载
+               -- （CLAUDE.local.md + daily log 仅在 is_group=0 时注入）。
 );
 """
 

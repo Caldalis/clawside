@@ -7,17 +7,23 @@ def get_session_routing() -> dict:
     inbound = open_inbound_db()
     try:
         row = inbound.execute(
-            "SELECT channel_type, platform_id, thread_id "
-            "FROM session_routing WHERE id = 1"
+            "SELECT * FROM session_routing WHERE id = 1"
         ).fetchone()
     finally:
         inbound.close()
     if row is None:
-        return {"channel_type": None, "platform_id": None, "thread_id": None}
+        return {
+            "channel_type": None,
+            "platform_id": None,
+            "thread_id": None,
+            "is_group": None,
+        }
     return {
         "channel_type": row["channel_type"],
         "platform_id": row["platform_id"],
         "thread_id": row["thread_id"],
+        # 旧 inbound.db 可能尚未被主机 spawn 自愈补列；缺失视为未知（None）。
+        "is_group": row["is_group"] if "is_group" in row.keys() else None,
     }
 
 

@@ -683,6 +683,33 @@ async def run_bash(command: str, timeout_ms: int = 30000) -> str:
 
 
 @mcp.tool()
+async def memory_append(text: str) -> str:
+    """Append a timestamped entry to today's daily memory log
+    (/workspace/agent/memory/<today>.md). Use it the moment something worth
+    remembering happens: a fact, a preference, a decision, a deadline.
+    One entry = one fact, 2-3 sentences max. Do not ask permission first.
+    """
+    if not text or not text.strip():
+        return "Error: text is required"
+    tz_name = os.environ.get("TZ") or "UTC"
+    try:
+        tz = ZoneInfo(tz_name)
+    except Exception:
+        tz = ZoneInfo("UTC")
+    now = datetime.now(tz)
+    memory_dir = os.path.join(WORKSPACE_ROOT, "agent", "memory")
+    path = os.path.join(memory_dir, f"{now:%Y-%m-%d}.md")
+    entry = f"### {now:%H:%M}\n{text.strip()}\n\n"
+    try:
+        os.makedirs(memory_dir, exist_ok=True)
+        with open(path, "a", encoding="utf-8") as f:
+            f.write(entry)
+    except OSError as e:
+        return f"Error: could not write memory: {e!r}"
+    return f"Remembered (memory/{now:%Y-%m-%d}.md)"
+
+
+@mcp.tool()
 async def load_skill(name: str) -> str:
     """Load the full SKILL.md content for a registered skill by name."""
     content = _local_registry.load(name)
