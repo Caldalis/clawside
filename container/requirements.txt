@@ -1,6 +1,7 @@
 openai>=1.30.0
 mcp>=1.0.0
 tiktoken>=0.7.0
+numpy>=1.26
 python-dotenv>=1.0
 croniter>=2.0
 pyyaml>=6.0

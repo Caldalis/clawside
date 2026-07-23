@@ -138,6 +138,7 @@ TELEGRAM_BOT_TOKEN=123456789:ABC_xxx
 | `OPENAI_API_KEY` | 传给 agent 容器的 API key | 无 |
 | `OPENAI_BASE_URL` | OpenAI 兼容 API 地址 | `https://api.openai.com/v1` |
 | `DEFAULT_MODEL` | 默认模型 | `gpt-4o` |
+| `EMBEDDING_MODEL` | 记忆/知识库混合检索的嵌入模型（设为空串禁用向量路，检索退回纯全文） | `text-embedding-3-small` |
 | `CONTAINER_IMAGE` | agent 容器镜像 | `clawside-agent:latest` |
 | `CONTAINER_RUNTIME` | 容器运行时 | `docker` |
 | `TELEGRAM_BOT_TOKEN` | 存在时启用 Telegram adapter | 无 |
@@ -417,7 +418,9 @@ groups/writer/CLAUDE.md
 
 来定义这个 agent 的角色、风格、规则。
 
-`CLAUDE.local.md` 会被创建为一个可写的长期记忆文件。不过当前代码里，容器启动时只会自动读取 `CLAUDE.md`，不会自动把 `CLAUDE.local.md` 注入系统提示词。如果你希望它每轮都一定生效，需要在 `CLAUDE.md` 中要求 agent 主动读取它，或者修改 `container/agent_runner/main.py` 把它也加载进 base prompt。
+`CLAUDE.local.md` 会被创建为一个可写的长期记忆文件，每轮自动注入系统提示词——但仅限私聊会话（群聊中永不加载，避免泄露敏感信息）。此外 agent 还会通过 `memory_append` MCP 工具往 `memory/YYYY-MM-DD.md` 写 append-only 的每日日志，今天和昨天两天的日志同样自动加载。内置的 `memory` skill 会教 agent 什么内容该写进哪里。
+
+会话转录会在历史压缩前和 `/clear` 时自动归档为 `sessions/*.md` 并入索引——用户说过的话永远不会被不可逆地丢弃。每晚的记忆整理例程（把反复出现的事实晋升进 `CLAUDE.local.md`、清理过期条目）只需对 agent 说一句"每天凌晨4点做记忆整理"即可开启，剧本在内置的 `memory-consolidation` skill 里。
 
 ## 内置 MCP 工具
 
@@ -443,7 +446,16 @@ container/agent_runner/mcp_servers/clawside.py
 - `write_file(path, content)`：写文件。
 - `edit_file(path, old_string, new_string)`：替换文件内容。
 - `run_bash(command, timeout_ms=30000)`：在 `/workspace` 下运行 bash。
+- `memory_append(text)`：往今日记忆日志追加一条带时间戳的记录。
+- `memory_search(query, k=6, source=None)`：对记忆、会话归档和知识库做全文检索，
+  返回带 路径+行区间 的片段。群聊会话只能检索 `knowledge`。
+- `memory_get(path, start_line, end_line)`：按行区间精读记忆/知识库文件（带上下文）。
+- `memory_sync(force=False)`：重建检索索引（`force=True` 删库全量重建）。
 - `load_skill(name)`：加载 skill 全文。
+
+检索索引存在 `groups/<folder>/memory.db`——它是可丢弃的派生物：随时删掉，
+`memory_sync` 会从文件全量重建。放进 `groups/<folder>/knowledge/` 的文档
+（`.md`/`.txt`）会被自动索引，agent 可直接检索。
 
 容器内工具的文件访问范围限制在 `/workspace` 下。容器能看到：
 

@@ -32,6 +32,7 @@ class Config:
     openai_api_key: Optional[str]
     openai_base_url: str
     default_model: str
+    embedding_model: str             # 空串 = 禁用向量检索
 
     container_image: str
     container_runtime: str           # 'docker'（目前唯一选项）
@@ -69,6 +70,7 @@ def _load() -> Config:
         openai_api_key=_env("OPENAI_API_KEY"),
         openai_base_url=_env("OPENAI_BASE_URL", "https://api.openai.com/v1") or "https://api.openai.com/v1",
         default_model=_env("DEFAULT_MODEL", "gpt-4o") or "gpt-4o",
+        embedding_model=os.environ.get("EMBEDDING_MODEL", "text-embedding-3-small"),
         container_image=_env("CONTAINER_IMAGE", "clawside-agent:latest") or "clawside-agent:latest",
         container_runtime=_env("CONTAINER_RUNTIME", "docker") or "docker",
         telegram_bot_token=_env("TELEGRAM_BOT_TOKEN"),

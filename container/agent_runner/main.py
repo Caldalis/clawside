@@ -35,6 +35,7 @@ def _build_servers_dict(container_servers: dict) -> dict[str, dict]:
     builtin = {
         "command": "python",
         "args": ["-m", "agent_runner.mcp_servers.clawside"],
+        "env": dict(os.environ),
     }
     servers: dict[str, dict] = {"clawside": builtin}
     for name, spec in (container_servers or {}).items():

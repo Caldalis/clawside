@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import logging
 import sys
-from typing import Any, Optional
+from typing import Any, Callable, Optional
 
 # tiktoken 是可选依赖 不可用时回退到粗略的字节估算
 try:
@@ -120,7 +120,12 @@ async def _summarize(messages_to_summarize: list[dict], client: Any, model: str)
     return str(content)
 
 
-async def maybe_compress(messages: list[dict], client: Any, model: str) -> list[dict]:
+async def maybe_compress(
+    messages: list[dict],
+    client: Any,
+    model: str,
+    on_evict: Optional[Callable[[list[dict]], Optional[str]]] = None,
+) -> list[dict]:
     if not messages:
         return messages
 
@@ -145,12 +150,22 @@ async def maybe_compress(messages: list[dict], client: Any, model: str) -> list[
     if not older:
         return messages
 
+    archived_path: Optional[str] = None
+    if on_evict is not None:
+        try:
+            archived_path = on_evict(older)
+        except Exception as e:
+            _log(f"on_evict failed (continuing with compression): {e!r}")
+
+    note = f" (full transcript archived to {archived_path})" if archived_path else ""
+
     try:
         summary_text = await _summarize(older, client, model)
         summary_msg = {
             "role": "user",
             "content": (
-                "Earlier conversation summary (compressed for context limits):\n"
+                f"Earlier conversation summary{note} "
+                "(compressed for context limits):\n"
                 + summary_text
             ),
         }

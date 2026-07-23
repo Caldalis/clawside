@@ -276,6 +276,7 @@ def _build_container_args(
         args += ["-e", f"OPENAI_API_KEY={cfg.openai_api_key}"]
     args += ["-e", f"OPENAI_BASE_URL={cfg.openai_base_url}"]
     args += ["-e", f"DEFAULT_MODEL={container_config.model}"]
+    args += ["-e", f"EMBEDDING_MODEL={cfg.embedding_model}"]
     args += ["-e", f"ASSISTANT_NAME={container_config.assistant_name}"]
 
     for m in mounts:

@@ -34,6 +34,7 @@ from agent_runner.formatter import (
 )
 from agent_runner.history import maybe_compress
 from agent_runner.memory import build_memory_section
+from agent_runner.session_archive import archive_history
 from agent_runner.skill_loader import SkillContext, SkillRegistry, build_skills_prompt
 from agent_runner.agent import run_agent
 
@@ -246,6 +247,8 @@ async def run(
             for msg in messages:
                 if is_clear_command(msg):
                     _log("clearing session history")
+                    # 先归档再清空
+                    archive_history(get_history(), reason="clear")
                     set_history([])
                     write_message_out(
                         id=_generate_id(),
@@ -281,7 +284,12 @@ async def run(
             )
 
             history.append({"role": "user", "content": prompt_xml})
-            history = await maybe_compress(history, client, config.model)
+            history = await maybe_compress(
+                history,
+                client,
+                config.model,
+                on_evict=lambda msgs: archive_history(msgs, "compress"),
+            )
             turn_messages: list[dict] = (
                 [{"role": "system", "content": system_prompt}] + history
             )

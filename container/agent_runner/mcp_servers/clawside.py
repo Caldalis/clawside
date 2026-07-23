@@ -98,18 +98,32 @@ def _get_session_routing() -> dict:
     db = _open_inbound()
     try:
         row = db.execute(
-            "SELECT channel_type, platform_id, thread_id "
-            "FROM session_routing WHERE id = 1"
+            "SELECT * FROM session_routing WHERE id = 1"
         ).fetchone()
     finally:
         db.close()
     if row is None:
-        return {"channel_type": None, "platform_id": None, "thread_id": None}
+        return {
+            "channel_type": None,
+            "platform_id": None,
+            "thread_id": None,
+            "is_group": None,
+        }
     return {
         "channel_type": row["channel_type"],
         "platform_id": row["platform_id"],
         "thread_id": row["thread_id"],
+        # 旧 inbound.db 可能尚未被主机 spawn 自愈补列；缺失视为未知。
+        "is_group": row["is_group"] if "is_group" in row.keys() else None,
     }
+
+
+def _session_is_private() -> bool:
+    """仅当明确 is_group=0 才算私聊（fail-closed，与 memory.py 一致）。"""
+    try:
+        return _get_session_routing().get("is_group") == 0
+    except Exception:
+        return False
 
 def _list_destinations() -> list[dict]:
     db = _open_inbound()
@@ -708,6 +722,135 @@ async def memory_append(text: str) -> str:
         return f"Error: could not write memory: {e!r}"
     return f"Remembered (memory/{now:%Y-%m-%d}.md)"
 
+from agent_runner import memory_index  # noqa: E402
+# 同步节流：每进程首查走 full 档（哈希校准），之后 30 秒内不重复 fast 同步
+_SYNC_MIN_INTERVAL_S = 30.0
+_did_full_sync = False
+_last_sync_ts = 0.0
+
+def _maybe_sync_before_search() -> None:
+    global _did_full_sync, _last_sync_ts
+    now = time.time()
+    try:
+        if not _did_full_sync:
+            memory_index.sync(full=True)
+            _did_full_sync = True
+            _last_sync_ts = now
+        elif now - _last_sync_ts > _SYNC_MIN_INTERVAL_S:
+            memory_index.sync(full=False)
+            _last_sync_ts = now
+    except Exception as e:
+        print(f"[clawside] pre-search sync failed: {e!r}", file=sys.stderr, flush=True)
+
+_PRIVATE_SOURCES = {"local", "memory", "session"}
+
+@mcp.tool()
+async def memory_search(query: str, k: int = 6, source: Optional[str] = None) -> str:
+    """Mandatory recall step: search your memory and knowledge base BEFORE
+    answering questions about past work, decisions, dates, people,
+    preferences, or anything you might have written down.
+
+    Returns snippets with path + line ranges; follow up with memory_get
+    to read the exact lines. If the first query misses, rephrase and
+    search again. `source` filters: memory | session | knowledge | local.
+    """
+    if not query or not query.strip():
+        return "Error: query is required"
+
+    allowed: Optional[list[str]] = None
+    if not _session_is_private():
+        allowed = ["knowledge"]
+    if source:
+        if allowed is not None and source in _PRIVATE_SOURCES:
+            return f"Error: source {source!r} is only searchable in private sessions"
+        allowed = [source]
+
+    _maybe_sync_before_search()
+    try:
+        hits = memory_index.search(query, k=k, sources=allowed)
+    except Exception as e:
+        return f"Error: search failed: {e!r} — try memory_sync(force=True)"
+
+    if not hits:
+        return (
+            "No matches. Rephrase with different keywords and search again "
+            "(e.g. synonyms, a person's name, a date)."
+        )
+    lines: list[str] = []
+    for i, h in enumerate(hits, start=1):
+        lines.append(
+            f"[{i}] {h.path}:{h.start_line}-{h.end_line} "
+            f"(score {h.score:.2f}, {h.source})"
+        )
+        lines.append(f"    {h.snippet}")
+    return "\n".join(lines)
+
+@mcp.tool()
+async def memory_get(path: str, start_line: int, end_line: int) -> str:
+    """Read exact lines (1-based, inclusive) from a memory/knowledge file,
+    with a few lines of surrounding context. Use the path and line range
+    returned by memory_search.
+    """
+    if not path:
+        return "Error: path is required"
+    try:
+        s, e = int(start_line), int(end_line)
+    except (TypeError, ValueError):
+        return "Error: start_line and end_line must be integers"
+    if s < 1 or e < s:
+        return "Error: invalid line range"
+
+    base = os.path.realpath(memory_index.agent_dir())
+    candidate = path if os.path.isabs(path) else os.path.join(base, path)
+    resolved = os.path.realpath(candidate)
+    if not (resolved == base or resolved.startswith(base + os.sep)):
+        return f"Error: path is outside the agent directory ({path})"
+
+    if not _session_is_private():
+        rel = os.path.relpath(resolved, base).replace(os.sep, "/")
+        if not rel.startswith("knowledge/"):
+            return "Error: only knowledge/ files are accessible in group sessions"
+
+    if not os.path.isfile(resolved):
+        return f"Error: file not found: {path}"
+    try:
+        with open(resolved, "r", encoding="utf-8", errors="replace") as f:
+            lines = f.read().split("\n")
+    except OSError as err:
+        return f"Error: could not read file: {err!r}"
+
+    pad = 5
+    lo = max(1, s - pad)
+    hi = min(len(lines), e + pad)
+    rel = os.path.relpath(resolved, base).replace(os.sep, "/")
+    body = "\n".join(lines[lo - 1 : hi])
+    return f"{rel}:{lo}-{hi} ({len(lines)} lines total)\n{body}"
+
+
+@mcp.tool()
+async def memory_sync(force: bool = False) -> str:
+    """Re-index memory/knowledge files into the search index.
+    force=True drops the index and rebuilds from scratch.
+    """
+    global _did_full_sync, _last_sync_ts
+    try:
+        if force:
+            memory_index.drop_index()
+        stats = memory_index.sync(full=True)
+        _did_full_sync = True
+        _last_sync_ts = time.time()
+    except Exception as e:
+        return f"Error: sync failed: {e!r}"
+    embed_note = ""
+    if stats.embedded or stats.embed_pending:
+        embed_note = (
+            f", {stats.embedded} embedded"
+            + (f" ({stats.embed_pending} pending)" if stats.embed_pending else "")
+        )
+    return (
+        f"Index synced: {stats.indexed} indexed, {stats.skipped} unchanged, "
+        f"{stats.deleted} removed{embed_note} (fts={stats.fts_mode})"
+    )
 
 @mcp.tool()
 async def load_skill(name: str) -> str:

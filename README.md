@@ -147,6 +147,7 @@ Main environment variables:
 | `OPENAI_API_KEY` | API key passed into agent containers | none |
 | `OPENAI_BASE_URL` | OpenAI-compatible API base URL | `https://api.openai.com/v1` |
 | `DEFAULT_MODEL` | Default model | `gpt-4o` |
+| `EMBEDDING_MODEL` | Embedding model for memory/knowledge hybrid search (empty string disables the vector path; search falls back to full-text only) | `text-embedding-3-small` |
 | `CONTAINER_IMAGE` | Agent container image | `clawside-agent:latest` |
 | `CONTAINER_RUNTIME` | Container runtime | `docker` |
 | `TELEGRAM_BOT_TOKEN` | Enables the Telegram adapter when present | none |
@@ -441,11 +442,19 @@ groups/writer/CLAUDE.md
 
 to define the agent's role, style, and rules.
 
-`CLAUDE.local.md` is created as a writable long-term memory file. In the current
-code, the container startup only automatically reads `CLAUDE.md`; it does not
-automatically inject `CLAUDE.local.md` into the system prompt. If you want it to
-be guaranteed in context every turn, instruct the agent in `CLAUDE.md` to read
-it, or modify `container/agent_runner/main.py` to load it into the base prompt.
+`CLAUDE.local.md` is created as a writable long-term memory file. It is
+automatically loaded into the system prompt every turn — but only in private
+sessions (never in group chats, to protect sensitive information). Alongside
+it, the agent keeps append-only daily logs in `memory/YYYY-MM-DD.md` via the
+`memory_append` MCP tool; today's and yesterday's logs are auto-loaded too.
+The built-in `memory` skill teaches the agent when to write which.
+
+Conversation transcripts are archived to `sessions/*.md` automatically before
+history compression and on `/clear`, then indexed for search — nothing the
+user said is irreversibly lost. A nightly memory-consolidation routine
+(promote recurring facts into `CLAUDE.local.md`, prune stale entries) can be
+enabled by simply asking the agent to schedule it; the built-in
+`memory-consolidation` skill holds the playbook.
 
 ## Built-in MCP Tools
 
@@ -473,7 +482,20 @@ Currently implemented tools:
 - `write_file(path, content)`: write a file.
 - `edit_file(path, old_string, new_string)`: replace file content.
 - `run_bash(command, timeout_ms=30000)`: run bash under `/workspace`.
+- `memory_append(text)`: append a timestamped entry to today's daily memory log.
+- `memory_search(query, k=6, source=None)`: full-text search over memory,
+  session archives, and the knowledge base; returns snippets with
+  path + line ranges. Group sessions can only search `knowledge`.
+- `memory_get(path, start_line, end_line)`: read exact lines from a
+  memory/knowledge file (with surrounding context).
+- `memory_sync(force=False)`: re-index memory/knowledge files
+  (`force=True` drops and rebuilds the index).
 - `load_skill(name)`: load the full skill text.
+
+The search index lives in `groups/<folder>/memory.db` — a derived,
+disposable artifact: delete it any time and `memory_sync` rebuilds it from
+the files. Documents dropped into `groups/<folder>/knowledge/` (`.md`/`.txt`)
+are indexed automatically and searchable by the agent.
 
 Container tools are limited to `/workspace`. The container can see:
 
